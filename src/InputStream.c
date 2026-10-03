@@ -1,4 +1,5 @@
 #include "Limelight-internal.h"
+#include "KvmInputHooks.h"
 
 static SOCKET inputSock = INVALID_SOCKET;
 static unsigned char currentAesIv[16];
@@ -14,6 +15,21 @@ static PLT_THREAD inputSendThread;
 
 static float absCurrentPosX;
 static float absCurrentPosY;
+
+// --- KVM input redirection (moonlight-kvm-input fork) -----------------------
+// All-NULL by default: a client that never installs hooks gets byte-identical
+// upstream behaviour. See KvmInputHooks.h for the contract.
+static KVM_INPUT_HOOKS g_KvmHooks;
+
+void LiSetKvmInputHooks(const KVM_INPUT_HOOKS *hooks) {
+    if (hooks != NULL) {
+        memcpy(&g_KvmHooks, hooks, sizeof(g_KvmHooks));
+    }
+    else {
+        memset(&g_KvmHooks, 0, sizeof(g_KvmHooks));
+    }
+}
+
 
 // Limited by number of bits in activeGamepadMask
 #define MAX_GAMEPADS 16
@@ -708,6 +724,10 @@ int LiSendMouseMoveEvent(short deltaX, short deltaY) {
     PPACKET_HOLDER holder;
     int err;
 
+    if (g_KvmHooks.sendMouseMove != NULL) {
+        return g_KvmHooks.sendMouseMove(deltaX, deltaY);
+    }
+
     if (!initialized) {
         return -2;
     }
@@ -774,6 +794,10 @@ int LiSendMouseMoveEvent(short deltaX, short deltaY) {
 int LiSendMousePositionEvent(short x, short y, short referenceWidth, short referenceHeight) {
     PPACKET_HOLDER holder;
     int err;
+
+    if (g_KvmHooks.sendMousePosition != NULL) {
+        return g_KvmHooks.sendMousePosition(x, y, referenceWidth, referenceHeight);
+    }
 
     if (!initialized) {
         return -2;
@@ -853,6 +877,10 @@ int LiSendMouseButtonEvent(char action, int button) {
     PPACKET_HOLDER holder;
     int err;
 
+    if (g_KvmHooks.sendMouseButton != NULL) {
+        return g_KvmHooks.sendMouseButton(action, button);
+    }
+
     if (!initialized) {
         return -2;
     }
@@ -886,6 +914,10 @@ int LiSendMouseButtonEvent(char action, int button) {
 int LiSendKeyboardEvent2(short keyCode, char keyAction, char modifiers, char flags) {
     PPACKET_HOLDER holder;
     int err;
+
+    if (g_KvmHooks.sendKeyboard != NULL) {
+        return g_KvmHooks.sendKeyboard(keyCode, keyAction, modifiers, flags);
+    }
 
     if (!initialized) {
         return -2;
@@ -970,6 +1002,10 @@ int LiSendKeyboardEvent(short keyCode, char keyAction, char modifiers) {
 int LiSendUtf8TextEvent(const char *text, unsigned int length) {
     PPACKET_HOLDER holder;
     int err;
+
+    if (g_KvmHooks.dropInput != NULL) {
+        return g_KvmHooks.dropInput("text");
+    }
 
     if (!initialized) {
         return -2;
@@ -1168,6 +1204,10 @@ static int sendControllerEventInternal(short controllerNumber, short activeGamep
 int LiSendControllerEvent(int buttonFlags, unsigned char leftTrigger, unsigned char rightTrigger,
     short leftStickX, short leftStickY, short rightStickX, short rightStickY)
 {
+    if (g_KvmHooks.dropInput != NULL) {
+        return g_KvmHooks.dropInput("controller");
+    }
+
     return sendControllerEventInternal(0, 0x1, buttonFlags, leftTrigger, rightTrigger,
         leftStickX, leftStickY, rightStickX, rightStickY);
 }
@@ -1177,6 +1217,10 @@ int LiSendMultiControllerEvent(short controllerNumber, short activeGamepadMask,
     int buttonFlags, unsigned char leftTrigger, unsigned char rightTrigger,
     short leftStickX, short leftStickY, short rightStickX, short rightStickY)
 {
+    if (g_KvmHooks.dropInput != NULL) {
+        return g_KvmHooks.dropInput("controller");
+    }
+
     return sendControllerEventInternal(controllerNumber, activeGamepadMask,
         buttonFlags, leftTrigger, rightTrigger,
         leftStickX, leftStickY, rightStickX, rightStickY);
@@ -1186,6 +1230,10 @@ int LiSendMultiControllerEvent(short controllerNumber, short activeGamepadMask,
 int LiSendHighResScrollEvent(short scrollAmount) {
     PPACKET_HOLDER holder;
     int err;
+
+    if (g_KvmHooks.sendHighResScroll != NULL) {
+        return g_KvmHooks.sendHighResScroll(scrollAmount);
+    }
 
     if (!initialized) {
         return -2;
@@ -1287,6 +1335,10 @@ int LiSendHighResHScrollEvent(short scrollAmount) {
     PPACKET_HOLDER holder;
     int err;
 
+    if (g_KvmHooks.sendHighResHScroll != NULL) {
+        return g_KvmHooks.sendHighResHScroll(scrollAmount);
+    }
+
     if (!initialized) {
         return -2;
     }
@@ -1330,6 +1382,10 @@ int LiSendTouchEvent(uint8_t eventType, uint32_t pointerId, float x, float y, fl
                      float contactAreaMajor, float contactAreaMinor, uint16_t rotation) {
     PPACKET_HOLDER holder;
     int err;
+
+    if (g_KvmHooks.dropInput != NULL) {
+        return g_KvmHooks.dropInput("touch");
+    }
 
     if (!initialized) {
         return -2;
@@ -1379,6 +1435,10 @@ int LiSendPenEvent(uint8_t eventType, uint8_t toolType, uint8_t penButtons,
                    uint16_t rotation, uint8_t tilt) {
     PPACKET_HOLDER holder;
     int err;
+
+    if (g_KvmHooks.dropInput != NULL) {
+        return g_KvmHooks.dropInput("pen");
+    }
 
     if (!initialized) {
         return -2;
@@ -1431,6 +1491,10 @@ int LiSendControllerArrivalEvent(uint8_t controllerNumber, uint16_t activeGamepa
     PPACKET_HOLDER holder;
     int err;
 
+    if (g_KvmHooks.dropInput != NULL) {
+        return g_KvmHooks.dropInput("controller");
+    }
+
     if (!initialized) {
         return -2;
     }
@@ -1477,6 +1541,10 @@ int LiSendControllerArrivalEvent(uint8_t controllerNumber, uint16_t activeGamepa
 int LiSendControllerTouchEvent2(uint8_t controllerNumber, uint8_t eventType, uint8_t touchpadIndex, uint32_t pointerId, float x, float y, float pressure) {
     PPACKET_HOLDER holder;
     int err;
+
+    if (g_KvmHooks.dropInput != NULL) {
+        return g_KvmHooks.dropInput("controller");
+    }
 
     if (!initialized) {
         return -2;
@@ -1530,6 +1598,10 @@ int LiSendControllerTouchEvent(uint8_t controllerNumber, uint8_t eventType, uint
 int LiSendControllerMotionEvent(uint8_t controllerNumber, uint8_t motionType, float x, float y, float z) {
     PPACKET_HOLDER holder;
     int err;
+
+    if (g_KvmHooks.dropInput != NULL) {
+        return g_KvmHooks.dropInput("controller");
+    }
 
     if (!initialized) {
         return -2;
@@ -1601,6 +1673,10 @@ int LiSendControllerMotionEvent(uint8_t controllerNumber, uint8_t motionType, fl
 int LiSendControllerBatteryEvent(uint8_t controllerNumber, uint8_t batteryState, uint8_t batteryPercentage) {
     PPACKET_HOLDER holder;
     int err;
+
+    if (g_KvmHooks.dropInput != NULL) {
+        return g_KvmHooks.dropInput("controller");
+    }
 
     if (!initialized) {
         return -2;
